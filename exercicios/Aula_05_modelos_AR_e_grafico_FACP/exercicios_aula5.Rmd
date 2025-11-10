@@ -1,0 +1,88 @@
+---
+title: "Exercícios Aula 5"
+author: "Davi Wentrick"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    theme: yeti
+---
+
+## Exercício 1
+
+Considere o processo  
+
+\[
+x_t = 0.6 x_{t-1} + \varepsilon_t, 
+\quad \varepsilon_t \sim^{i.i.d.} N(0,1).
+\]
+
+1. O processo é estacionário?  
+
+Usando o polinomio caracteristico temos
+
+$$
+\phi(z) = 1 - 0.6z
+$$
+
+Queremos encontrar a raiz logo igualamos a 0
+
+$$
+ 1 - 0.6z = 0 \\
+ 1 = 0.6z  \\
+$$
+
+
+2. Encontre \(\text{Var}(x_t)\) e \(\gamma(k) = \text{Cov}(x_t, x_{t-k})\).  
+3. Calcule a função de autocorrelação (FAC) \(\rho(k)\).  
+
+---
+
+## Exercício 2
+
+Para o processo  
+
+\[
+x_t = 1.5 x_{t-1} - 0.7 x_{t-2} + \varepsilon_t
+\]
+
+1. Escreva o polinômio característico \(\Phi(z) = 1 - \phi_1 z - \phi_2 z^2\).  
+2. Encontre as raízes de \(\Phi(z) = 0\).  
+3. Verifique se o processo é **causal** e **estacionário**.  
+
+---
+
+## Exercício 3
+
+Para o processo  
+
+\[
+x_t = \phi x_{t-1} + \varepsilon_t, 
+\quad \varepsilon_t \sim^{i.i.d.} N(0, \sigma^2)
+\]
+
+1. Mostre que  
+   \[
+   \text{Var}(x_t) = \phi^2 \, \text{Var}(x_{t-1}) + \sigma^2.
+   \]  
+
+2. Use esse resultado para explicar por que \(|\phi| > 1\) implica que a variância do processo explode.  
+
+---
+
+## Exercício 4
+
+Considere o processo  
+
+\[
+x_t = \alpha + \phi_1 x_{t-1} + \cdots + \phi_p x_{t-p} + \varepsilon_t,
+\quad \varepsilon_t \sim^{i.i.d.} N(0,1).
+\]
+
+Suponha que todas as raízes do polinômio característico estejam fora do círculo unitário.  
+Mostre que:  
+
+\[
+E[x_t] = \frac{\alpha}{1 - \phi_1 - \phi_2 - \cdots - \phi_p}.
+\]

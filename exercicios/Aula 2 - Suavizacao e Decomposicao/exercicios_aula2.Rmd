@@ -1,0 +1,589 @@
+---
+title: "Suavizacao e Decomposicao"
+output: html_document
+---
+
+```{r}
+pacman::p_load(forecast,fpp2,magrittr)
+```
+
+Em series temporais temos o interesse em conseguir decompor a serie em componentes que sejam mais simples de serem modeladas, para isso temos duas formas de decompor uma serie
+
+- **Aditiva:**
+
+  \[
+  X_t = T_t + S_t + E_t
+  \]
+
+- **Multiplicativa:**
+
+  \[
+  X_t = T_t \times S_t \times E_t
+  \]
+
+Sendo
+
+- \(T_t\): a componente de **tendência**  
+- \(S_t\): a componente de **sazonalidade**  
+- \(E_t\): um **ruído** (a parte não explicada, que espera-se ser puramente aleatória)
+
+
+
+### Decomposicao Aditiva Clássica
+
+Aqui temos a decomposicao aditiva feita diretamente pela funcao *decompose()* do R
+
+```{r}
+X =  AirPassengers
+dec = decompose(X, type="a")
+plot(dec)
+```
+
+
+### Decomposicao Multiplicativa Clássica
+
+Aqui repetimos o processo porem tratando de forma multiplicativa
+
+```{r}
+dec = decompose(X, type="m")
+plot(dec)
+```
+
+### Extraindo Tendendencia
+
+Nessa etapa estamos interessados em entender como obter a componente de tendencia, para isso temos varios metodos um deles é utilizado pela funcao do R.
+
+#### Funcao Linear
+
+Aqui ajustamos uma regressao linear para obter a tendencia da serie
+
+```{r}
+tempo = time(X)
+out = lm(X ~ tempo)
+plot(X)
+lines(x=tempo, y=out$fitted,
+type='l')
+
+```
+
+#### Funcao Polinomial
+
+Para casos em que a serie tenha uma tendencia "inconsistente" subindo e descendo podemos ajustar um polinomio
+
+```{r}
+X = Nile
+tempo = as.numeric(time(X))
+out = lm(X ~ poly(tempo,2))
+out2 = lm(X ~ poly(tempo,6))
+```
+
+```{r}
+plot(X)
+lines(x=tempo, y=out$fitted,
+type='l')
+lines(x=tempo, y=out2$fitted,
+type='l')
+```
+
+#### Suavizacao por Medias Moveis
+
+Aqui chegamos no método mais utilizado, que é a media movel. 
+
+```{r}
+X =  AirPassengers
+SMA6 <- filter(X, rep(1/6,
+6),sides=1)
+SMA12 <- filter(X, rep(1/12,
+12), sides=1)
+
+```
+
+No grafico abaixo podemos notar que quando usamos a media movel com 6 valores em uma serie com sazonalidade anual, ela é incapaz de extrair corretamente a tendencia, ainda resta sazonalidade.
+
+```{r}
+# Gráfico
+plot(X, main="AirPassengers - Suavizacao", ylab="Numero de Passageiros", xlab="Ano")
+
+# Adiciona suavizações
+lines(SMA6, col="blue", lwd=2)
+lines(SMA12, col="red", lwd=2)
+
+# Legenda
+legend("topleft",
+       legend=c("Serie original","SMA 6 meses","SMA 12 meses"),
+       col=c("black","blue","red"),
+       lty=1, lwd=2, bty="n")
+```
+
+### MM Simetrica X MM Passado
+
+Temos duas formas de calcular uma MM, sendo ela usando valores passados ou simetrica (usando alguns valores futuros). A diferenca é que a serie usando valores passados vai ter um "atraso".
+
+```{r}
+X <- AirPassengers
+pass5 <- filter(X, rep(1/5, 5), sides=1)
+sim5 <- filter(X, rep(1/5, 5), sides=2)
+
+```
+
+```{r}
+# Gráfico
+plot(X, main="AirPassengers - Suavizacao", ylab="Numero de Passageiros", xlab="Ano")
+
+# Adiciona suavizações
+lines(pass5, col="blue", lwd=2)
+lines(sim5, col="red", lwd=2)
+
+# Legenda
+legend("topleft",
+       legend=c("Serie original","MM 5 (Passado)","MM 5 (Simetrico"),
+       col=c("black","blue","red"),
+       lty=1, lwd=2, bty="n")
+```
+
+### Decomposicao Aditiva Clássica (Manual)
+
+Agora que entendemos como extrair a tendencia, podemos partir para decompor a serie como um todo, nesse caso vamos extrair a tendencia e encontrar a sazonalidade e depois os residuos.
+
+#### Extraindo a Tendencia
+
+Inicialmente vamnos usar as MM para obter a componente de tendencia. E em seguida vamos subtrair da serie original para obter uma serie sem tendencia.
+
+```{r}
+X = AirPassengers
+T = filter(X,rep(1/13,13,sides=2))
+Z = X - T
+```
+
+```{r}
+plot(Z)
+```
+
+#### Extraindo a Sazonalidade
+
+Agora vamos criar uma matriz com 12 colunas (uma para cada mes) em seguida vamos distribuir as observacoes e tirar a media, assim obtemos as medias mensais da nossa serie e com isso pode usar para estimar a sazonalidade.
+
+```{r}
+n_periodos <- length(X) / 12
+
+MS <- matrix(Z, byrow = TRUE, ncol = 12)
+
+S <- colMeans(MS, na.rm = TRUE)
+
+S <- ts(rep(S, n_periodos), start = start(X), frequency = frequency(X))
+
+```
+
+```{r}
+plot(S)
+```
+
+#### Residuos
+
+Agora que temos os termos de tendencia e sazonalide podemos subtrair deles da serie original para obter o residuo.
+
+```{r}
+E <- X - T - S
+
+plot(cbind(X, T, S, E), main = "", plot.type = "m", lwd = 2)
+```
+
+### Decomposicao Multiplicativa Clássica (Manual) (Exercicio 1)
+
+#### Obtendo a Tendencia
+
+Aqui repetimos o que fizemos na aditiva onde pegamos a tendencia pela MM porem por ser multiplicativa para obter a serie com tendencia ajustada temos que dividir a serie original.
+
+```{r}
+X = AirPassengers
+T = filter(X,rep(1/13,13,sides=2))
+Z = X/T
+```
+
+```{r}
+plot(Z)
+```
+
+### Obtendo a Sazonalidade
+
+Aqui o processo é igual para obter as medias anuais da serie
+
+```{r}
+n_periodos <- length(X) / 12
+
+MS <- matrix(Z, byrow = TRUE, ncol = 12)
+
+S <- colMeans(MS, na.rm = TRUE)
+
+S <- ts(rep(S, n_periodos), start = start(X), frequency = frequency(X))
+```
+
+```{r}
+plot(S)
+```
+
+
+### Residuos 
+
+```{r}
+E <- X/(T*S)
+
+plot(cbind(X, T, S, E), main = "", plot.type = "m", lwd = 2)
+```
+
+### Ajustando a decomposicao Aditiva e Multiplicativa (Exercicio 2)
+
+Aqui vamos decompor outras series disponiveis no R
+
+```{r}
+data("UKgas")
+data("USAccDeaths")
+data("co2")
+data("nottem")
+data("presidents")
+
+```
+
+#### UKgas
+
+- O que é: consumo trimestral de gás no Reino Unido.
+- Período aproximado: 1960–1986.
+- Frequência: 4 (trimestres).
+- O que observar: tendência de longo prazo (expansão do consumo ao longo dos anos) e sazonalidade trimestral bem marcada (invernos vs. verões).
+
+```{r}
+plot(UKgas, main = "UKgas (consumo trimestral de gas no Reino Unido)", ylab = "Consumo", xlab = "Ano")
+```
+```{r}
+plot(decompose(UKgas,type = "a"))
+```
+
+```{r}
+plot(decompose(UKgas,type = "m"))
+```
+
+
+#### USAccDeaths
+
+- O que é: número de mortes mensais por acidentes automobilísticos nos EUA.
+- Período aproximado: 1973–1978.
+- Frequência: 12 (mensal).
+- O que observar: sazonalidade anual (picos nos meses mais movimentados/condições sazonais) e alguma variação de nível ao longo dos anos.
+
+```{r}
+plot(USAccDeaths, main = "USAccDeaths (mortes mensais em acidentes nos EUA)", ylab = "Obitos", xlab = "Ano")
+
+```
+
+```{r}
+plot(decompose(USAccDeaths,type = "a"))
+```
+
+```{r}
+plot(decompose(USAccDeaths,type = "m"))
+```
+
+
+#### co2
+
+- O que é: concentração mensal de CO₂ atmosférico medida em Mauna Loa (Havaí).
+- Período aproximado: 1959–1997.
+- Frequência: 12 (mensal).
+- O que observar: forte tendência de alta (acúmulo de CO₂ ao longo das décadas) e padrão sazonal anual (oscilações “dente-de-serra” por ciclos vegetativos do hemisfério norte).
+
+```{r}
+plot(co2, main = "co2 (concentracao mensal em Mauna Loa)", ylab = "ppm", xlab = "Ano")
+```
+
+```{r}
+plot(decompose(co2,type = "a"))
+```
+
+```{r}
+plot(decompose(co2,type = "m"))
+```
+
+#### nottem
+
+- O que é: temperaturas médias mensais em Nottingham (Inglaterra).
+- Período aproximado: 1920–1939.
+- Frequência: 12 (mensal).
+- O que observar: sazonalidade climática clara (ciclos anuais inverno–verão) e nível médio relativamente estável (pouca tendência de longo prazo no intervalo).
+
+```{r}
+plot(nottem, main = "nottem (temperaturas mensais em Nottingham)", ylab = "F", xlab = "Ano")
+```
+
+```{r}
+plot(decompose(nottem,type = "a"))
+```
+
+```{r}
+plot(decompose(nottem,type = "m"))
+```
+
+#### presidents
+
+- O que é: índices trimestrais de aprovação de presidentes dos EUA.
+- Período aproximado: 1945–1974.
+- Frequência: 4 (trimestral).
+- O que observar: mudanças de nível associadas a ciclos políticos/econômicos; sazonalidade não é a característica principal aqui.
+
+```{r}
+plot(presidents, main = "presidents (aprovacao presidencial trimestral nos EUA)", ylab = "Aprovacao (%)", xlab = "Ano")
+```
+
+### Decomposicao STL
+
+- STL é uma abreviação de *Seasonal and Treding using Loess*;
+
+- Esta é uma forma mais robusta de decomposição;
+
+- A componente sazonal é dinâmica, ou seja, pode mudar ao longo do tempo;
+
+- Apenas para decomposição aditiva:  
+
+  \[
+  X_t = T_t + S_t + E_t
+  \]
+
+- A decomposição multiplicativa pode ser obtida aplicando STL no log da série, i.e.,  
+
+  \[
+  \log X_t = \log T_t + \log S_t + \log E_t
+  \]
+
+  então  
+
+  \[
+  X_t = T_t \times S_t \times E_t
+  \]
+
+### Decomposicao STL (Manual)
+
+```{r}
+AirPassengers %>% plot
+
+X <- AirPassengers
+tempo <- time(AirPassengers)
+
+
+##
+# 1) Ajustar a tendencia via Loess
+T <- loess(X ~ tempo)$fitted 
+
+T <- ts(T, start=start(X), frequency=frequency(X))
+
+lines(T, col='red')
+```
+
+
+```{r}
+# 2) Obter a serie com tend?ncia ajustada
+Z <- X - T
+
+plot(Z)
+```
+
+
+```{r}
+# 3) Ajustar o termo de sazonalidade
+require(zoo)
+require(forecast)
+
+S <- rep(NA, length(Z))
+
+  # ajusta uma regressao de loess para o mes de janeiro, 
+  # outra para fevereiro e assim por diante.
+  ### o parametro span é equivalente a s.window/(numero de ciclos completos)
+for(i in 1:12){
+  idx <- which( cycle(Z)==i )
+  Z.m <- Z[idx]
+  S.m <- loess( Z.m ~ index(Z.m), span = 8/12 )$fitted
+  S[idx] <- S.m
+}
+
+S <- ts(S, start=start(X), frequency = frequency(X))
+
+plot(S)
+```
+
+
+```{r}
+# 4) Calcular os residuos
+E <- X-T-S
+
+plot(E)
+
+plot(cbind(X,T,S,E))
+```
+
+### STL s.window e t.window
+
+- `s.window`: tamanho da janela de ajuste para **sazonalidade**.  
+  Menores valores produzem mudanças de sazonalidade mais rápidas.  
+  Se `s.window = "periodic"`, então é utilizada a média.  
+  Cleveland et al. (1990) sugere que seja usado pelo menos 7;
+
+- `t.window`: tamanho da janela de ajuste para **tendência**.  
+  Menores valores produzem mudanças de tendência mais rápidas;
+
+```{r}
+x <- AirPassengers
+
+##### variando s.window ########
+stl(x, s.window=3) %>% plot( main='s.window=3' )
+
+stl(x, s.window=7) %>% plot( main='s.window=7' )
+
+stl(x, s.window=9) %>% plot( main='s.window=9' )
+
+stl(x, s.window=13) %>% plot( main='s.window=13' )
+
+stl(x, s.window='periodic') %>% plot( main='s.window=periodic' ) #pegamos a media da serie ou seja nao captamos a amplitude da sazonalidade que muda com o tempo
+```
+
+### Aplicando a decomposicao STL 
+
+#### UKgas
+
+- O que é: consumo trimestral de gás no Reino Unido.
+- Período aproximado: 1960–1986.
+- Frequência: 4 (trimestres).
+- O que observar: tendência de longo prazo (expansão do consumo ao longo dos anos) e sazonalidade trimestral bem marcada (invernos vs. verões).
+
+```{r}
+plot(UKgas, main = "UKgas (consumo trimestral de gas no Reino Unido)", ylab = "Consumo", xlab = "Ano")
+```
+
+```{r}
+stl(UKgas, s.window=6) %>% plot( main='s.window=6' )
+```
+
+
+
+
+
+#### USAccDeaths
+
+- O que é: número de mortes mensais por acidentes automobilísticos nos EUA.
+- Período aproximado: 1973–1978.
+- Frequência: 12 (mensal).
+- O que observar: sazonalidade anual (picos nos meses mais movimentados/condições sazonais) e alguma variação de nível ao longo dos anos.
+
+```{r}
+plot(USAccDeaths, main = "USAccDeaths (mortes mensais em acidentes nos EUA)", ylab = "Obitos", xlab = "Ano")
+
+```
+
+```{r}
+stl(USAccDeaths, s.window=8) %>% plot( main='s.window=8' )
+```
+
+
+#### co2
+
+- O que é: concentração mensal de CO₂ atmosférico medida em Mauna Loa (Havaí).
+- Período aproximado: 1959–1997.
+- Frequência: 12 (mensal).
+- O que observar: forte tendência de alta (acúmulo de CO₂ ao longo das décadas) e padrão sazonal anual (oscilações “dente-de-serra” por ciclos vegetativos do hemisfério norte).
+
+```{r}
+plot(co2, main = "co2 (concentracao mensal em Mauna Loa)", ylab = "ppm", xlab = "Ano")
+```
+
+```{r}
+stl(co2, s.window=7) %>% plot( main='s.window=7' )
+```
+
+#### nottem
+
+- O que é: temperaturas médias mensais em Nottingham (Inglaterra).
+- Período aproximado: 1920–1939.
+- Frequência: 12 (mensal).
+- O que observar: sazonalidade climática clara (ciclos anuais inverno–verão) e nível médio relativamente estável (pouca tendência de longo prazo no intervalo).
+
+```{r}
+plot(nottem, main = "nottem (temperaturas mensais em Nottingham)", ylab = "F", xlab = "Ano")
+```
+
+```{r}
+stl(nottem, s.window=8) %>% plot( main='s.window=7' )
+```
+
+### Funcao `mstl()` do pacote forecast
+
+- A função `mstl()` é uma versão automática da decomposição STL.  
+  Geralmente faz um bom balanço dos parâmetros `t.window` e `s.window`;
+
+- Assim como qualquer função automática, pode precisar de alguns ajustes dependendo da série temporal;
+
+Outras vantagens 
+
+- Decomposição MSTL: STL com múltiplas sazonalidades;  
+- Permite o uso automático da transformação de Box-Cox;
+
+#### Múltiplas sazonalidades
+
+- Algumas séries temporais podem apresentar múltiplas sazonalidades.  
+  Nestes casos, a função `mstl()` pode trazer grande vantagem quando comparada a `stl()`.
+
+  - Exemplo: uma série semanal pode apresentar um padrão de repetição **mensal** e outro **anual**.
+
+  - Exemplo: séries **intradíarias** (observadas em períodos menores que 1 dia) podem apresentar sazonalidade **diária** e **semanal**.
+
+```{r}
+library(forecast)
+x = msts(taylor,seasonal.periods = c(48,336))
+plot(mstl(x))
+```
+
+### Comparacao mstl() contra stl() (Exercicio 4)
+
+```{r}
+# Instalar/carregar dependências
+pkgs <- c("fpp2", "forecast")
+to_install <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
+if (length(to_install)) install.packages(to_install)
+library(fpp2)      # traz o dataset `calls` e carrega forecast, ggplot2 etc.
+library(forecast)
+
+# 1) Carregar a série e recortar as 4 primeiras semanas
+data("calls")
+# `calls` é uma msts com múltiplas sazonalidades (diária e semanal)
+# A função window(calls, end = 4) pega 4 "ciclos semanais"
+calls4 <- window(calls, end = 4)
+```
+
+
+```{r}
+# Checar períodos sazonais (em fpp2, normalmente 288 por dia (5-min x 12 por hora x 24h)
+# e 7*288 por semana)
+attr(calls, "msts")
+#> c(288, 2016)  # esperado (comentário informativo)
+```
+
+
+```{r}
+# 2) Decomposição STL (apenas 1 sazonalidade)
+#    Para STL precisamos de um objeto ts com UMA frequência (a diária).
+#    Usaremos a primeira sazonalidade (288 observações/dia).
+freq_diaria <- 169
+calls4_ts <- ts(as.numeric(calls4), frequency = freq_diaria)
+
+stl_add <- stl(calls4_ts, s.window = 7, robust = TRUE)
+plot(stl_add, main = "calls — Decomposição STL (sazonalidade diária)")
+```
+
+
+```{r}
+# 3) Decomposição MSTL (múltiplas sazonalidades)
+#    `mstl()` usa diretamente o objeto msts com todas as sazonalidades.
+mstl_mult <- mstl(calls4)  # por padrão, robust = FALSE; ajuste se quiser
+plot(mstl_mult, main = "calls — Decomposição MSTL (diária + semanal)")
+```
+
+
+
+
+

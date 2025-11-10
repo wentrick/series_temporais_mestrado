@@ -1,0 +1,607 @@
+---
+title: "trabalho_series_1"
+output:
+  pdf_document: default
+  #html_document: default
+---
+
+```{r include=FALSE}
+pacman::p_load(Mcomp,forecast,ggplot2,patchwork,zoo,dplyr,gridExtra, knitr, kableExtra, grid)
+data(M3)
+id=1890 # id da série
+```
+
+### Introducao
+
+A série M489, classificada como industrial e de periodicidade mensal, representa os embarques totais de pneus pneumáticos (pneumatic casings) ao longo do tempo. O período histórico cobre de janeiro de 1982 a junho de 1992, seguido por projeções (“future data”) até dezembro de 1993. 
+
+```{r include=FALSE}
+M3[[id]]
+```
+
+
+
+```{r include=FALSE}
+h = M3[[id]]$h # horizonte de previsão
+x = M3[[id]]$x # dados de treinamento
+teste = M3[[id]]$xx # dados de teste
+```
+
+```{r include=FALSE}
+# Conferências úteis
+print(M3[[id]]$stype)      # tipo (YEARLY, QUARTERLY, MONTHLY, etc.)
+print(frequency(x))   # frequência (1, 4, 12, etc.)
+start(x); end(x)      # início e fim
+```
+
+
+
+
+
+
+```{r}
+M3[[id]] %>% plot() # gráfico do treinamento e do teste
+```
+
+Observa-se uma tendência geral de crescimento moderado ao longo da década de 1980, partindo de cerca de 4.200 mil unidades em 1982 para valores próximos de 7.000 mil unidades em anos posteriores, com flutuações sazonais marcadas: os embarques tendem a atingir picos entre meados e o final do ano (junho a outubro) e quedas nos meses iniciais, padrão típico de sazonalidade anual. Há também oscilações cíclicas de médio prazo, refletindo possíveis variações na demanda industrial e no setor automotivo. As projeções para 1992-1993 sugerem manutenção dos níveis elevados de produção, em torno de 6.500 a 7.700 mil unidades mensais, indicando estabilidade após o crescimento observado na década anterior.
+
+### Decomposição STL
+
+
+```{r echo=FALSE}
+fit_stl <- stl(x, s.window = 9, robust = TRUE)
+# Plot base do R
+plot(fit_stl, main = paste0("STL - M3 id ", id))
+```
+
+Aplicando a decomposicao, podemos notar que conseguimos capturar bem a sazonalidade e observamos uma tendencia de crescimento 
+
+```{r eval=FALSE, include=FALSE}
+# Decomposição automática com MSTL (robusta)
+fit <- forecast::mstl(x, robust = TRUE)
+#print(fit)  # estrutura e componentes
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# Gráfico bonito dos componentes (autoplot do forecast)
+autoplot(fit) + ggtitle(sprintf("MSTL — M3 id %d", id))
+```
+
+### Seleção dos modelos
+
+#### SARIMA (Manual)
+
+Para a selecao do modelo, foi observado que a serie necessita somente de uma integracao simples e sem uma sazonal, com isso podemos analisar os graficos FAC e FACP da serie integrada
+
+
+```{r include=FALSE}
+x %>% ndiffs()
+```
+
+```{r include=FALSE}
+x %>% diff() %>% ndiffs()
+```
+
+```{r include=FALSE}
+w = x %>% diff() #%>% diff(lag=12)
+```
+
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+par(mfrow = c(1,2))
+acf(w, lag.max = 12*8)
+pacf(w, lag.max = 12*8)
+```
+
+Nos gráficos de autocorrelacao da série diferenciada $w$, observa-se que os \textit{lags} intermediários não estão bem definidos, especialmente na FACP, indicando que valores pequenos de $p$ e $q$ devem ser testados inicialmente. Contudo, nota-se uma estrutura sazonal evidente: na FAC, os \textit{lags} sazonais exibem um decaimento gradual, enquanto na FACP há um corte mais claro no primeiro \textit{lag} sazonal, sugerindo um comportamento autorregressivo na parte sazonal. Assim, até este ponto, o modelo indicado é um \textbf{SARIMA}$(p,1,q)\times(1,0,0)$, sendo conveniente agora variar os valores de $p$ e $q$ para identificar a melhor combinação e alcançar um ajuste mais adequado ao comportamento da série.
+
+
+SARIMA(1,1,1)x(1,0,1)
+
+```{r}
+fit <- Arima(x, order = c(1,1,1), seasonal = c(1,0,0))
+```
+
+```{r echo=FALSE}
+#par(mfrow = c(1,2))
+E1 = fit$residuals
+plot(E1)
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=8}
+# Resíduos (a partir de 1983)
+E <- fit$residuals %>% window(start = c(1983, 1))
+
+# Série dos resíduos
+plot(E,
+     main = "Residuos do modelo ARIMA com Drift",
+     ylab = "Residuos",
+     xlab = "Tempo",
+     lwd = 1.5)
+abline(h = 0, col = "red", lty = 2)
+
+# QQ-plot e ACF lado a lado
+par(mfrow = c(1, 2))
+
+qqnorm(E,
+       main = "Grafico QQ-Normal dos Residuos")
+qqline(E, col = "red", lwd = 2)
+
+acf(E,
+    main = "FAC dos Residuos",
+    lwd = 2)
+
+par(mfrow = c(1, 1))  # volta para 1 gráfico por vez
+```
+
+
+#### SARIMA com Box-Cox
+
+```{r echo=FALSE}
+x_bc <- BoxCox(x, lambda = "auto")
+autoplot(x_bc) + ggtitle("Série transformada por Box–Cox")
+```
+
+```{r include=FALSE}
+x_bc %>% ndiffs()
+```
+
+```{r include=FALSE}
+x_bc %>% diff() %>% ndiffs()
+```
+
+```{r include=FALSE}
+w_bc = x_bc %>% diff()
+```
+
+
+```{r echo=FALSE, fig.height=5, fig.width=10}
+par(mfrow = c(1,2))
+acf(w_bc, lag.max = 12*5)
+pacf(w_bc, lag.max = 12*5)
+```
+
+```{r include=FALSE}
+fit_bc <- Arima(x, order = c(1,1,1), seasonal = c(1,0,0), lambda = BoxCox.lambda(x))
+
+# Resíduos (a partir de 1983)
+E <- fit_bc$residuals %>% window(start = c(1983, 1))
+```
+
+```{r echo=FALSE, fig.height=5, fig.width=8}
+# Série dos resíduos
+plot(E,
+     main = "Residuos do modelo ARIMA com Drift",
+     ylab = "Residuos",
+     xlab = "Tempo",
+     lwd = 1.5)
+abline(h = 0, col = "red", lty = 2)
+
+# QQ-plot e ACF lado a lado
+par(mfrow = c(1, 2))
+
+qqnorm(E,
+       main = "Grafico QQ-Normal dos Residuos")
+qqline(E, col = "red", lwd = 2)
+
+acf(E,
+    lag.max = 12*5,
+    main = "FAC dos Residuos",
+    lwd = 2)
+
+par(mfrow = c(1, 1))  # volta para 1 gráfico por vez
+```
+
+#### SARIMA com Drift
+
+```{r}
+#### ARIMA com Drift
+fit_drift <- Arima(x, order = c(1,0,1), seasonal = c(1,1,1), include.drift = TRUE)
+
+# Resíduos (a partir de 1983)
+E <- fit_drift$residuals %>% window(start = c(1983, 1))
+```
+
+```{r fig.width=8, fig.height=5}
+# Série dos resíduos
+plot(E,
+     main = "Residuos do modelo ARIMA com Drift",
+     ylab = "Residuos",
+     xlab = "Tempo",
+     lwd = 1.5)
+abline(h = 0, col = "red", lty = 2)
+
+# QQ-plot e ACF lado a lado
+par(mfrow = c(1, 2))
+
+qqnorm(E,
+       main = "Grafico QQ-Normal dos Residuos")
+qqline(E, col = "red", lwd = 2)
+
+acf(E,
+    main = "FAC dos Residuos",
+    lwd = 2)
+
+par(mfrow = c(1, 1))  # volta para 1 gráfico por vez
+```
+
+### Parâmetros Estimados
+
+#### SARIMA (Manual)
+
+```{r}
+summary(fit)
+```
+
+#### SARIMA com Box-Cox
+
+```{r}
+summary(fit_bc)
+```
+
+#### SARIMA com Drift
+
+```{r}
+summary(fit_drift)
+```
+
+### Análise dos Resíduos
+
+#### SARIMA (Manual)
+
+```{r fig.width=8, fig.height=5}
+# Resíduos (a partir de 1983)
+E <- fit$residuals %>% window(start = c(1983, 1))
+
+# Série dos resíduos
+plot(E,
+     main = "Residuos do modelo SARIMA",
+     ylab = "Residuos",
+     xlab = "Tempo",
+     lwd = 1.5)
+abline(h = 0, col = "red", lty = 2)
+
+# QQ-plot e ACF lado a lado
+par(mfrow = c(1, 2))
+
+qqnorm(E,
+       main = "Grafico QQ-Normal dos Resiiiduos")
+qqline(E, col = "red", lwd = 2)
+
+acf(E,
+    main = "FAC dos Residuos",
+    lwd = 2)
+
+par(mfrow = c(1, 1))  # volta para 1 gráfico por vez
+```
+
+#### SARIMA com Box-Cox
+
+```{r fig.width=8, fig.height=5}
+# Resíduos (a partir de 1983)
+E <- fit_bc$residuals %>% window(start = c(1983, 1))
+
+# Série dos resíduos
+plot(E,
+     main = "Residuos do modelo SARIMA com Box-Cox",
+     ylab = "Residuos",
+     xlab = "Tempo",
+     lwd = 1.5)
+abline(h = 0, col = "red", lty = 2)
+
+# QQ-plot e ACF lado a lado
+par(mfrow = c(1, 2))
+
+qqnorm(E,
+       main = "Grafico QQ-Normal dos Resíduos")
+qqline(E, col = "red", lwd = 2)
+
+acf(E,
+    main = "FAC dos Residuos",
+    lwd = 2)
+
+par(mfrow = c(1, 1))  # volta para 1 gráfico por vez
+```
+
+#### SARIMA com Drift
+
+```{r fig.width=8, fig.height=5}
+# Resíduos (a partir de 1983)
+E <- fit_drift$residuals %>% window(start = c(1983, 1))
+
+# Série dos resíduos
+plot(E,
+     main = "Residuos do modelo SARIMA com Drift",
+     ylab = "Residuos",
+     xlab = "Tempo",
+     lwd = 1.5)
+abline(h = 0, col = "red", lty = 2)
+
+# QQ-plot e ACF lado a lado
+par(mfrow = c(1, 2))
+
+qqnorm(E,
+       main = "Grafico QQ-Normal dos Residuos")
+qqline(E, col = "red", lwd = 2)
+
+acf(E,
+    main = "FAC dos Residuos",
+    lwd = 2)
+
+par(mfrow = c(1, 1))  # volta para 1 gráfico por vez
+```
+
+### Estudo Janela Deslizante
+
+```{r}
+#SARIMA manual
+f_arima_manual <- function(y, h){
+fit = Arima(y, order=c(1,1,1), seasonal=c(1,0,1))
+forecast(fit, h)
+}
+```
+
+```{r}
+f_arima_bc <- function(y, h){
+fit = Arima(y, order=c(1,1,1), seasonal=c(1,0,1), lambda = BoxCox.lambda(y))
+forecast(fit, h)
+}
+```
+
+```{r}
+f_arima_drift <- function(y, h){
+fit = Arima(x, order = c(1,0,1), seasonal = c(1,1,1), include.drift = TRUE)
+forecast(fit, h)
+}
+```
+
+```{r}
+f_holt_damped <- function(y, h){
+fit = holt(y, h, damped = TRUE )
+forecast(fit, h)
+}
+```
+
+```{r}
+f_holt_winters <- function(y, h){
+fit =  hw(y, h=, seasonal = "m")
+forecast(fit, h)
+}
+```
+
+
+```{r}
+CV_arima_manual = tsCV(y=x, forecastfunction=f_arima,h=12, initial=length(x) - 36)
+
+CV_arima_bc = tsCV(y=x, forecastfunction=f_arima_bc, h=12, initial=length(x) - 36)
+
+CV_arima_drift = tsCV(y=x, forecastfunction=f_arima_drift, h=12, initial=length(x) - 36)
+
+CV_holt_damped = tsCV(y=x, forecastfunction=f_holt_damped, h=12, initial=length(x) - 36)
+
+CV_holt_winters = tsCV(y=x, forecastfunction=f_holt_winters, h=12, initial=length(x) - 36)
+
+# ultimas 10 linhas de 7 colunas da saida da tsCV()
+CV_arima_manual[,1:7] %>% round(2) %>% tail(10)
+
+
+```
+
+
+```{r}
+MAE_arima_manual = CV_arima_manual %>% abs() %>% colMeans(na.rm=T)
+MAE_arima_bc = CV_arima_bc %>% abs() %>% colMeans(na.rm=T)
+MAE_arima_drift = CV_arima_drift %>% abs() %>% colMeans(na.rm=T)
+MAE_holt_damped = CV_holt_damped %>% abs() %>% colMeans(na.rm=T)
+MAE_holt_winters = CV_holt_winters %>% abs() %>% colMeans(na.rm=T)
+tab = cbind(MAE_arima_manual,MAE_arima_bc,MAE_arima_drift,MAE_holt_damped,MAE_holt_winters)
+print(tab)
+```
+
+```{r fig.width=10, fig.height=6}
+plot.ts(tab, plot.type='s',col=1:5,lwd=c(2,2),xlab="h",ylab="MAE")
+legend(x=0.6,y=1290, legend=c("Manual","Box-Cox", "Drift","Holt Damped","Holt-Winters"), col=1:5, lwd=c(2,2))
+```
+
+### Previsao 
+
+```{r fig.width=15, fig.height=6}
+# Horizonte de previsão (ex: 12 meses)
+h <- 18
+
+# ---- 1) Previsões individuais ----
+fc_fit       <- forecast(fit, h = h)          # modelo base
+fc_fit_bc    <- forecast(fit_bc, h = h)       # com Box–Cox (já volta à escala original)
+fc_fit_drift <- forecast(fit_drift, h = h)    # com drift
+```
+
+
+```{r fig.width=10, fig.height=10}
+#  Modelo ARIMA base
+p1 <- autoplot(fc_fit) +
+  ggtitle("Previsao - ARIMA base") +
+  ylab("Shipments") + xlab("Ano") +
+  theme_minimal(base_size = 12)
+
+# Modelo com Box–Cox
+p2 <- autoplot(fc_fit_bc) +
+  ggtitle("Previsao - ARIMA com Box–Cox") +
+  ylab("Shipments") + xlab("Ano") +
+  theme_minimal(base_size = 12)
+
+# Modelo com Drift
+p3 <- autoplot(fc_fit_drift) +
+  ggtitle("Previsao - ARIMA com Drift") +
+  ylab("Shipments") + xlab("Ano") +
+  theme_minimal(base_size = 12)
+
+# Combina os 3 lado a lado
+(p1 / p2 / p3) +
+  plot_annotation(title = "Comparacao das previsoes — Serie M489")
+```
+
+
+```{r fig.width=15, fig.height=6}
+tab_fit <- data.frame(
+  Data = as.yearmon(time(fc_fit$mean)),
+  Teste = teste,
+  Previsto = as.numeric(fc_fit$mean),
+  Lower95 = as.numeric(fc_fit$lower[,2]),
+  Upper95 = as.numeric(fc_fit$upper[,2])
+)
+
+tab_bc <- data.frame(
+  Data = as.yearmon(time(fc_fit_bc$mean)),
+  Teste = teste,
+  Previsto = as.numeric(fc_fit_bc$mean),
+  Lower95 = as.numeric(fc_fit_bc$lower[,2]),
+  Upper95 = as.numeric(fc_fit_bc$upper[,2])
+)
+
+tab_drift <- data.frame(
+  Data = as.yearmon(time(fc_fit_drift$mean)),
+  Teste = teste,
+  Previsto = as.numeric(fc_fit_drift$mean),
+  Lower95 = as.numeric(fc_fit_drift$lower[,2]),
+  Upper95 = as.numeric(fc_fit_drift$upper[,2])
+)
+
+```
+
+
+```{r fig.width=13, fig.height=8}
+# Cria um título (textGrob) para cada tabela
+titulo1 <- textGrob("ARIMA Manual", gp = gpar(fontsize = 12, fontface = "bold"))
+titulo2 <- textGrob("ARIMA com Box–Cox", gp = gpar(fontsize = 12, fontface = "bold"))
+titulo3 <- textGrob("ARIMA com Drift", gp = gpar(fontsize = 12, fontface = "bold"))
+
+# Empilha cada título com sua respectiva tabela
+tabela1 <- arrangeGrob(titulo1, tableGrob(tab_fit, rows = NULL), ncol = 1, heights = c(0.2, 1))
+tabela2 <- arrangeGrob(titulo2, tableGrob(tab_bc, rows = NULL), ncol = 1, heights = c(0.2, 1))
+tabela3 <- arrangeGrob(titulo3, tableGrob(tab_drift, rows = NULL), ncol = 1, heights = c(0.2, 1))
+
+# Mostra tudo lado a lado
+grid.arrange(tabela1, tabela2, tabela3, ncol = 3,
+             top = textGrob("Previsoes Pontuais e Intervalares",
+                            gp = gpar(fontsize = 13, fontface = "bold")))
+
+```
+
+#### MAE
+
+```{r}
+# ========= Config =========
+h <- 18
+                          
+# ====== Ajuste dos modelos ======
+m_auto      <- auto.arima(x, seasonal = TRUE, stepwise = FALSE, approximation = FALSE)
+m_ses       <- ses(x, h = h)
+m_holt      <- holt(x, h = h)
+m_holt_d    <- holt(x, damped = TRUE, h = h)
+m_hw        <- hw(x, seasonal = "multiplicative", h = h)
+m_ets       <- ets(x) |> forecast(h = h)
+```
+
+
+```{r}
+# ====== Função auxiliar ======
+make_tab <- function(fc) {
+  # Se não for forecast, gera previsão
+  if (!inherits(fc, "forecast")) fc <- forecast(fc, h = h)
+  
+  data.frame(
+    Data = as.yearmon(time(fc$mean)),
+    Previsto = as.numeric(fc$mean)
+  ) %>%
+    mutate(across(where(is.numeric), round, 2))
+}
+
+# ====== Tabelas individuais ======
+tab_auto  <- make_tab(forecast(m_auto, h = h))
+tab_ses   <- make_tab(m_ses)
+tab_holt  <- make_tab(m_holt)
+tab_holtd <- make_tab(m_holt_d)
+tab_hw    <- make_tab(m_hw)
+tab_ets   <- make_tab(m_ets)
+```
+
+```{r}
+h_eval <- length(teste)
+
+# Garante que o objeto é um 'forecast'; se não for, gera com horizonte h_eval
+ensure_forecast <- function(obj, h) {
+  if (inherits(obj, "forecast")) obj else forecast(obj, h = h)
+}
+
+
+# Monta a lista de previsões (cada item vira/é um forecast com h_eval passos)
+fc_list <- list(
+  "auto.arima()"        = ensure_forecast(m_auto,    h_eval),
+  "ses()"               = ensure_forecast(m_ses,     h_eval),
+  "holt()"              = ensure_forecast(m_holt,    h_eval),
+  "holt(damped=TRUE)"   = ensure_forecast(m_holt_d,  h_eval),
+  "hw()"                = ensure_forecast(m_hw,      h_eval),
+  "ets()"               = ensure_forecast(m_ets,     h_eval),
+  "ARIMA base (fit)"   = ensure_forecast(fit,        h_eval),
+  "Box-Cox (fit_bc)"   = ensure_forecast(fit_bc,     h_eval),
+  "Com Drift (fit_drift)" = ensure_forecast(fit_drift, h_eval)
+)
+```
+
+```{r}
+# Função MAE segura (corta ao menor comprimento disponível)
+MAE <- function(fc, y) {
+  yhat <- as.numeric(fc$mean)
+  n <- min(length(yhat), length(y))
+  mean(abs(yhat[1:n] - as.numeric(y)[1:n]), na.rm = TRUE)
+}
+
+# Calcula MAE para cada modelo
+mae_vec <- sapply(fc_list, MAE, y = teste)
+
+# Tabela final (ordenada do menor MAE para o maior)
+tabela_mae <- data.frame(
+  Modelo = names(mae_vec),
+  MAE = round(unname(mae_vec), 2),
+  row.names = NULL
+)
+tabela_mae <- tabela_mae[order(tabela_mae$MAE), ]
+
+print(tabela_mae)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,145 @@
+---
+title: "Exercícios - Aula 1"
+author: "Disciplina de Análise de Séries Temporais"
+output: html_document
+---
+
+### Atividade 1: utilizando o software R
+
+#### (1) simule o seguinte processo deterministico:
+$$
+X_t=1000+0.1 t
+$$
+
+```{r}
+# 1) Simule o processo determinístico:
+set.seed(5)
+t <- 1:300
+Xt <- 1000 + 0.1 * t
+plot(t, Xt, type="l", main="Processo determinístico Xt", ylab="Xt", xlab="t")
+```
+
+
+#### (2) simule a série cíclica com periodicidade igual a 12:
+$$
+S_t=20 \sin ((2 \pi / 12) t)
+$$
+```{r}
+# 2) Simule a série cíclica com periodicidade 12 e adicione ao processo anterior:
+St <- 20 * sin((2*pi/12) * t)
+plot(t, St, type="l", main="Série  cíclica St", ylab="St", xlab="t")
+```
+
+
+e adicione ao processo do item anterior:
+$$
+Y_t=X_t+S_t
+$$
+
+```{r}
+Yt <- Xt + St
+plot(t, Yt, type="l", main="Série com componente cíclica Yt", ylab="Yt", xlab="t")
+```
+
+#### (3) simule o ruido branco $E_t \sim N(0,25)$ e adicione ao processo anterior:
+$$
+Z_t=X_t+S_t+E_t
+$$
+
+```{r}
+# 3) Simule o ruído branco e adicione ao processo:
+set.seed(123)
+Et <- rnorm(length(t), mean=0, sd=5) # N(0,25) → sd = sqrt(25) = 5
+Zt <- Xt + St + Et
+plot(t, Zt, type="l", main="Série final Zt = Xt + St + Et", ylab="Zt", xlab="t")
+```
+
+#### (4) dada uma série simulada do processo $Z_t$, analise o resultado da função decompose();
+
+```{r}
+# 4) Analise o resultado da função decompose():
+tsZ <- ts(Zt, frequency=12)
+decomp <- decompose(tsZ)
+plot(decomp)
+```
+
+#### (5) você conseguiria sugerir uma forma de prever os valores futuros dessa série?
+
+```{r}
+h <- 30 # numero de pontos que serao previstos (horizonte de previsao)
+n = 300
+dec <- decompose(tsZ)
+
+trend <- dec$trend  ## componente de tendencia
+sea <- dec$seasonal ## componente sazonal
+E <- dec$random     ## componente aleatorio
+
+
+## previsao da componente de tendencia
+tempo <- 1:n
+trend.lm <- lm(trend ~ tempo)
+trend.forec <- trend.lm$coefficients[[1]] +  trend.lm$coefficients[[2]]*((n+1):(n+h)) %>% ts(start=end(trend)+c(0,1), frequency = 12)
+cbind(trend, trend.forec) %>% plot.ts(plot.type='s', col=c(1,2))
+
+## previsao do termo sazonal
+library(forecast)
+
+sea.forec <- snaive(sea, h=h)$mean
+
+cbind(sea, sea.forec) %>% plot.ts(plot.type='s', col=c(1,2))
+
+
+### previsão pontual
+forec <- trend.forec + sea.forec
+
+cbind(tsZ, forec) %>% plot.ts(plot.type = 's', col=c(1,2))
+```
+
+
+```{r}
+# 5) Sugira uma forma de prever valores futuros:
+library(forecast)
+fit <- auto.arima(tsZ)
+forecast(fit, h=12) |> plot(main="Previsão da série Zt")
+```
+
+### Atividade 2: utilizando o software R
+
+#### (1) simule 100 pontos do seguinte processo estocástico:
+$$
+X_t=5+0.35 X_{t-1}+0.6 X_{t-6}+\varepsilon_t
+$$
+sendo $\left\{\varepsilon_t\right\}$ i.i.d $N(0,4)$ e os primeiros seis pontos iguais a 58.9, 60.0, 59.8, 59.2, 58.9, 58.7.
+
+```{r}
+set.seed(123)
+n <- 100
+X <- numeric(n)
+X[1:6] <- c(58.9, 60.0, 59.8, 59.2, 58.9, 58.7)
+for (t in 7:n) {
+  X[t] <- 5 + 0.35 * X[t-1] + 0.6 * X[t-6] + rnorm(1, mean=0, sd=2)
+}
+plot.ts(X, main="Processo estocástico Xt", ylab="Xt")
+```
+
+#### (2) admita que os primeiros 90 pontos são dados observados e os demais são dados de teste. Conhecendo o processo gerador, construa numericamente uma banda com $95 \%$ de probabilidade de conter os dados de teste.
+
+```{r}
+train <- X[1:90]
+test <- X[91:100]
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
