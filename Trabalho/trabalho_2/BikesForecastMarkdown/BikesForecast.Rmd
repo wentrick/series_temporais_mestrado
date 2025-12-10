@@ -1,0 +1,592 @@
+---
+title: "Previsão de Demanda de Bicicletas"
+subtitle: "Comparação entre TBATS, Regressão Harmônica e Regressão Dinâmica"
+author: "Davi Wentrick Feijó"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+# ==============================================================================
+# CONFIGURAÇÕES GLOBAIS
+# ==============================================================================
+# Estas opções garantem que o PDF final fique limpo, sem avisos de código
+knitr::opts_chunk$set(
+  echo = FALSE,      # Mostra o código no PDF
+  message = TRUE,  # Remove mensagens de carregamento de pacotes
+  warning = TRUE,  # Remove avisos de alerta
+  fig.align = "center",
+  fig.width = 12,  # <--- Aumente aqui (padrão é 7)
+  fig.height = 7,  # <--- Ajuste aqui para ficar mais "panorâmico"
+  out.width = "100%" # Garante que a imagem não extrapole a margem do PDF
+)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# ==============================================================================
+# 1. PACOTES E CONFIGURAÇÃO
+# ==============================================================================
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, forecast, lubridate, ggplot2, gridExtra, tseries)
+```
+
+\section{Resumo}
+O presente estudo avalia e compara o desempenho preditivo de três modelos de séries temporais aplicados à demanda horária de um sistema de compartilhamento de bicicletas, uma série caracterizada por \textbf{múltipla sazonalidade} (diária e semanal). As metodologias comparadas foram o \textbf{TBATS}, a \textbf{Regressão Harmônica} e a \textbf{Regressão Dinâmica} (Harmônica com covariáveis climáticas). A validação foi realizada utilizando uma estratégia \textit{holdout}, onde as últimas 672 horas foram reservadas como conjunto de teste. Os resultados demonstraram que o modelo de \textbf{Regressão Dinâmica} alcançou a maior acurácia \textit{out-of-sample}, com \textbf{RMSE de 178.654} e \textbf{MAE de 154.567}, superando o TBATS (RMSE 204.878) e a Regressão Harmônica (RMSE 226.587). Embora o TBATS tenha apresentado o menor erro no conjunto de treino, a superioridade da abordagem híbrida confirma que a inclusão de fatores exógenos (clima) ajudou no desempenho.
+
+\vspace{0.3cm}
+\noindent \textbf{Palavras-chave:} Séries Temporais; Múltipla Sazonalidade; TBATS; Regressão Dinâmica; Previsão.
+
+\newpage
+
+```{r}
+# ==============================================================================
+# 2. IMPORTAÇÃO E TRATAMENTO
+# ==============================================================================
+caminho <- "hour.csv" # Certifique-se que o arquivo está na pasta do projeto
+
+# Leitura básica
+raw_data <- read.csv(caminho) %>%
+  as_tibble() %>%
+  mutate(
+    dteday = ymd(dteday),
+    datetime = ymd_h(paste(dteday, hr)) # Cria índice temporal
+  ) %>%
+  arrange(datetime)
+
+# Criação de Lags (Covariáveis para Regressão Dinâmica)
+# DICA: Verifique se no seu CSV é 'windspeed' ou 'wind'. Usarei 'windspeed'.
+bike_df <- raw_data %>%
+  mutate(
+    lag_temp = lag(temp, 1),
+    lag_hum  = lag(hum, 1),
+    lag_wind = lag(windspeed, 1) # Se der erro, mude para 'wind'
+  ) %>%
+  drop_na() # Remove a primeira linha (NA gerado pelo lag)
+
+# Definição do Objeto MSTS (Série com Múltiplas Sazonalidades)
+# Períodos: 24 (Diário) e 168 (Semanal)
+y_msts <- msts(bike_df$cnt, seasonal.periods = c(24, 168), start = c(2011, 1))
+
+# Matriz de Covariáveis Climáticas (Clima)
+xreg_clima <- cbind(
+  Temp = bike_df$lag_temp,
+  Hum  = bike_df$lag_hum,
+  Wind = bike_df$lag_wind
+)
+```
+
+\section{Introdução}
+Este trabalho avalia métodos de previsão para séries temporais de alta frequência caracterizadas por múltiplas sazonalidades. O estudo utiliza o conjunto de dados do sistema \textit{Capital Bikeshare} (Washington, D.C.), obtido via UCI Machine Learning Repository.
+
+A base de dados compreende registros horários de aluguel de bicicletas entre os anos de 2011 e 2012, totalizando 17.379 observações. A escolha deste dataset fundamenta-se em três características críticas para a modelagem:
+
+\begin{itemize}
+    \item \textbf{Alta Frequência e Múltipla Sazonalidade:} A série apresenta ciclos sobrepostos bem definidos: um ciclo diário (período 24) e um ciclo semanal (período 168), exigindo métodos capazes de lidar com sazonalidade complexa.
+    \item \textbf{Influência Exógena:} A demanda é fortemente correlacionada com variáveis climáticas disponíveis no banco de dados (temperatura, umidade e velocidade do vento), permitindo testar modelos de Regressão Dinâmica.
+    \item \textbf{Não-linearidade e Ruído:} A presença de feriados e eventos atípicos desafia a robustez dos modelos tradicionais.
+\end{itemize}
+
+Para capturar essas dinâmicas, comparam-se três abordagens metodológicas:
+\begin{enumerate}
+    \item \textbf{TBATS:} Modelo de espaço de estados para sazonalidade complexa.
+    \item \textbf{Regressão Harmônica:} Modelagem determinística dos ciclos via termos de Fourier.
+    \item \textbf{Regressão Dinâmica:} Extensão do modelo harmônico com inclusão de covariáveis climáticas.
+\end{enumerate}
+
+\subsection{Pré-processamento e Tratamento dos Dados}
+O conjunto de dados \textit{Bike Sharing} foi submetido a um rigoroso pré-processamento para garantir a adequação à modelagem de séries temporais.
+
+\begin{enumerate}
+    \item \textbf{Conversão Temporal:} As colunas de data (\texttt{dteday}) e hora (\texttt{hr}) foram combinadas para criar um único índice temporal (\texttt{datetime}) no formato \texttt{YYYY-MM-DD HH:00:00}. A série foi então ordenada cronologicamente.
+    
+    \item \textbf{Definição da Múltipla Sazonalidade (MST):} A variável alvo (\texttt{cnt} - contagem total de aluguéis) foi convertida no objeto \texttt{msts} (Multiple Seasonal Time Series), definindo explicitamente seus períodos sazonais como 24 (diário) e 168 (semanal).
+    
+    \item \textbf{Ajuste de Sazonalidade Longa:} Devido à curta extensão da série (dois anos completos), optou-se por excluir a modelagem explícita de ciclos de longa duração (mensal ou anual). Esta decisão foi tomada para prevenir instabilidade nos algoritmos e evitar o \textit{overfitting} de termos sazonais insuficientemente representados.
+    
+    \item \textbf{Criação de Regressores Defasados (\textit{Lags}):} Para o Modelo de Regressão Dinâmica, foram criadas variáveis defasadas (\textit{lags} de 1 hora) para as covariáveis climáticas (\texttt{temp}, \texttt{hum} e \texttt{windspeed}). Esta transformação garante que o modelo utilize apenas a informação climática conhecida no momento da previsão (\textit{ex ante}).
+    
+    \item \textbf{Tratamento Específico do TBATS:} Foi identificado que a ativação da transformação de Box-Cox (\texttt{use.box.cox = TRUE}) no modelo TBATS induzia instabilidade numérica, causando a explosão do intervalo de confiança e a degradação da acurácia. Portanto, a transformação foi desativada no ajuste do TBATS para garantir a robustez e comparabilidade com os demais modelos.
+\end{enumerate}
+O conjunto final de dados, após o tratamento, foi dividido para a validação \textit{holdout}, reservando as últimas 504 horas para o conjunto de teste.
+
+```{r message=FALSE, warning=FALSE}
+# 1. Gráfico da Série Completa (2011-2012)
+# Mostra a Tendência de crescimento e a Sazonalidade Anual (Inverno vs Verão)
+g_completo <- ggplot(bike_df, aes(x = datetime, y = cnt)) +
+  geom_line(color = "#2c3e50", size = 0.3, alpha = 0.7) +
+  labs(title = "A. Série Histórica Completa (2011-2012)",
+       subtitle = "Visualização da Tendência de Alta e Sazonalidade Anual",
+       x = NULL, y = "Aluguéis / Hora") +
+  theme_minimal()
+
+# 2. Gráfico com Zoom (Recorte de 2 semanas em Maio/2012)
+# Mostra o "Comportamento": Picos de horário de rush (8h e 18h) e diferença Fim de Semana
+zoom_inicio <- ymd_h("2012-05-06 00") # Um Domingo
+zoom_fim    <- ymd_h("2012-05-20 23") # Duas semanas depois
+
+df_zoom <- bike_df %>%
+  filter(datetime >= zoom_inicio & datetime <= zoom_fim)
+
+g_zoom <- ggplot(df_zoom, aes(x = datetime, y = cnt)) +
+  geom_line(color = "#e67e22", size = 0.8) +
+  # Adiciona pontos para destacar que são dados horários
+  geom_point(size = 0.9, alpha = 0.4, color = "#d35400") + 
+  labs(title = "B. Zoom: Detalhe do Comportamento Horário (2 Semanas)",
+       subtitle = "Ciclos Diários (Picos de Trabalho) e Diferença Dia Útil vs Fim de Semana",
+       x = "Data", y = "Aluguéis / Hora") +
+  scale_x_datetime(date_labels = "%a %d/%m", date_breaks = "1 day") + # %a mostra Seg, Ter...
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 3. Exibir os dois juntos
+grid.arrange(g_completo, g_zoom, ncol = 1, heights = c(1, 1.2))
+```
+
+
+```{r}
+# 2. Executar a Decomposição
+# iterate = 4: Refina a decomposição para ser mais robusta a outliers
+decomp <- mstl(y_msts, iterate = 6, s.window = 5)
+
+# 3. Visualização Automática (autoplot)
+# O autoplot do pacote forecast já reconhece o objeto MSTL e separa os componentes
+plot_decomp <- autoplot(decomp) +
+  labs(title = "Decomposição MSTL: Demanda de Bicicletas",
+       subtitle = "Componentes: Dados, Tendência, Sazonalidade Diária (24h) e Semanal (168h)",
+       x = "Tempo (Anos)",
+       y = "Componentes") +
+  theme_minimal()
+
+print(plot_decomp)
+```
+
+A modelagem da sazonalidade foi restringida em função das características da série temporal: sua alta frequência (dados horários) e sua curta extensão histórica (apenas dois anos). A inclusão de ciclos de longo prazo, como sazonalidade mensal ou anual, impôs dificuldades computacionais e de estimação aos modelos, resultando em instabilidade, especialmente para o TBATS. Dessa forma, optou-se por focar exclusivamente nos ciclos de alta frequência: o \textbf{diário} (24h) e o \textbf{semanal} (168h). Esta escolha parsimoniosa resultou em um desempenho preditivo significativamente melhor e em um diagnóstico de resíduos mais eficaz, com os componentes de erro apresentando uma aparência mais próxima de um processo aleatório. Adicionalmente, a análise de decomposição revelou que o volume total de demanda possui uma tendência crescente ao longo do tempo, o que se manifesta como um aumento na amplitude das próprias sazonalidades diárias e semanais.
+
+
+\section{Metodologia}
+A estratégia de validação adotada foi a divisão temporal da amostra (\textit{Holdout Validation}), respeitando a ordem cronológica dos dados para evitar o viés de antecipação (\textit{look-ahead bias}). A série foi particionada em dois subconjuntos complementares:
+
+\begin{itemize}
+    \item \textbf{Conjunto de Treino ($N_{treino} = N - 672$):} Composto pelas observações iniciais, utilizado para a estimação dos parâmetros dos modelos e seleção de hiperparâmetros.
+    \item \textbf{Conjunto de Teste ($h = 672$ horas):} Correspondente às últimas 4 semanas (28 dias) da série. Este conjunto foi mantido isolado durante o treinamento e utilizado estritamente para mensurar a acurácia das previsões fora da amostra (\textit{out-of-sample}).
+\end{itemize}
+
+\subsection{Especificação e Ajuste dos Modelos}
+Foram avaliadas três abordagens de modelagem para séries com múltipla sazonalidade. A seleção de ordens e parâmetros seguiu os critérios abaixo:
+
+\subsubsection{Modelo TBATS}
+O modelo TBATS foi ajustado utilizando o algoritmo automático proposto por De Livera et al. (2011), que seleciona a melhor combinação de componentes baseado na minimização do critério de informação AIC. O ajuste incluiu a otimização automática do parâmetro de transformação de Box-Cox ($\lambda$) para estabilização da variância e a modelagem dos erros via processo ARMA($p,q$).
+
+\subsubsection{Regressão Harmônica e Dinâmica}
+Para os modelos baseados em regressão (Harmônica e Dinâmica), a sazonalidade determinística foi modelada através da decomposição em Séries de Fourier, dada pela equação:
+\[
+S_t = \sum_{j=1}^{K_1} \left[ \alpha_j \sin\left(\frac{2\pi j t}{24}\right) + \beta_j \cos\left(\frac{2\pi j t}{24}\right) \right] + \sum_{i=1}^{K_2} \left[ \gamma_i \sin\left(\frac{2\pi i t}{168}\right) + \delta_i \cos\left(\frac{2\pi i t}{168}\right) \right]
+\]
+A complexidade dos ciclos foi definida pelos hiperparâmetros $K_1=10$ (ciclo diário) e $K_2=5$ (ciclo semanal), escolhidos para capturar o perfil de demanda sem incorrer em \textit{overfitting}.
+
+A estrutura de autocorrelação residual ($\eta_t$) foi modelada via SARIMA, cujas ordens $(p,d,q)$ foram selecionadas automaticamente pelo algoritmo de Hyndman-Khandakar (\textit{auto.arima}), utilizando busca \textit{stepwise} para minimizar o AICc. No caso da Regressão Dinâmica, as variáveis exógenas defasadas (temperatura, umidade e vento) foram adicionadas como regressores lineares à equação principal.
+
+```{r include=FALSE}
+# ==============================================================================
+# 3. DIVISÃO TREINO E TESTE (Holdout Sample)
+# ==============================================================================
+# Vamos separar as últimas 3 semanas (21 dias) para teste final
+h_teste  <- 28 * 24 
+n_total  <- length(y_msts)
+n_treino <- n_total - h_teste
+
+# Divisão da Série Y (Alvo)
+y_treino <- subset(y_msts, end = n_treino)
+y_teste  <- subset(y_msts, start = n_treino + 1)
+
+# Divisão das Covariáveis X (Clima)
+xreg_clima_treino <- xreg_clima[1:n_treino, ]
+xreg_clima_teste  <- xreg_clima[(n_treino + 1):n_total, ]
+
+print(paste("Total Treino:", length(y_treino), "horas"))
+print(paste("Total Teste: ", length(y_teste), "horas"))
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# ==============================================================================
+# 4. MODELAGEM
+# ==============================================================================
+
+# --- MODELO 1: TBATS (Benchmark) ---
+print("Treinando TBATS... (Isso pode demorar um pouco)")
+fit_tbats <- tbats(y_treino, use.box.cox = FALSE, use.parallel = TRUE, num.cores = NULL)
+prev_tbats <- forecast(fit_tbats, h = h_teste)
+
+# --- PREPARAÇÃO FOURIER (Para Modelos 2 e 3) ---
+# K=c(10, 5) -> 10 harmônicos para dia (24h), 5 para semana (168h)
+K_params <- c(10, 5) 
+
+fourier_treino <- fourier(y_treino, K = K_params)
+fourier_teste  <- fourier(y_treino, K = K_params, h = h_teste)
+
+# --- MODELO 2: REGRESSÃO HARMÔNICA (Apenas Sazonalidade) ---
+print("Treinando Regressão Harmônica...")
+fit_harm <- auto.arima(y_treino, 
+                       xreg = fourier_treino, 
+                       seasonal = FALSE, # Fourier cuida da sazonalidade
+                       stepwise = FALSE, 
+                       approximation = TRUE)
+
+prev_harm <- forecast(fit_harm, xreg = fourier_teste)
+
+# --- MODELO 3: REGRESSÃO DINÂMICA (Fourier + Clima) ---
+print("Treinando Regressão Dinâmica (Clima + Fourier)...")
+
+# Combina Fourier + Clima
+xreg_final_treino <- cbind(xreg_clima_treino, fourier_treino)
+xreg_final_teste  <- cbind(xreg_clima_teste,  fourier_teste)
+
+# Nomear colunas para evitar erros internos
+colnames(xreg_final_treino) <- paste0("Reg", 1:ncol(xreg_final_treino))
+colnames(xreg_final_teste)  <- paste0("Reg", 1:ncol(xreg_final_teste))
+
+fit_dyn <- auto.arima(y_treino, 
+                      xreg = xreg_final_treino, 
+                      seasonal = FALSE,
+                      stepwise = FALSE, 
+                      approximation = TRUE)
+
+prev_dyn <- forecast(fit_dyn, xreg = xreg_final_teste)
+```
+
+\subsection{Modelos Selecionados}
+
+\begin{table}[htbp]
+    \centering
+    \caption{Resumo da Especificação e Ajuste dos Modelos (Base de Treino)}
+    \label{tab:ajuste_completo_simples}
+    \vspace{0.2cm}
+    \begin{tabular}{|l|c|c|c|}
+        \hline
+        \textbf{Característica} & \textbf{1. TBATS} & \textbf{2. Reg. Harmônica} & \textbf{3. Reg. Dinâmica} \\
+        \hline
+        Estrutura & ARMA(5,5) & ARIMA(0,1,3) & ARIMA(5,1,0) \\
+        \hline
+        Sazonalidade & Fourier $K=\langle 6, 5 \rangle$ & Fourier $K=\langle 10, 5 \rangle$ & Fourier $K=\langle 10, 5 \rangle$ \\
+        \hline
+        AIC & 306674.7 & 197276.4 & \textbf{197068.3} \\
+        \hline
+        \multicolumn{4}{|c|}{\textit{Erros no Conjunto de Treinamento}} \\
+        \hline
+        RMSE & \textbf{74.72} & 88.56 & 88.00 \\
+        \hline
+        MAE & \textbf{50.19} & 60.27 & 59.89 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+
+A escolha dos modelos foi motivada pela necessidade de comparar metodologias distintas na abordagem de séries com \textbf{múltipla sazonalidade} (diária e semanal). O \textbf{TBATS} foi selecionado como o principal \textit{benchmark} de espaço de estados, por sua capacidade de seleção automática e robusta dos componentes do modelo. A \textbf{Regressão Harmônica} serviu como \textit{benchmark} de regressão, utilizando termos de Fourier ($K=10$ para 24h e $K=5$ para 168h) para modelar os ciclos determinísticos. Por fim, a \textbf{Regressão Dinâmica} foi incluída como a abordagem aprimorada, cujo objetivo central é testar o ganho de acurácia obtido ao incorporar variáveis exógenas (climáticas) como regressores, buscando superar as limitações dos modelos puramente temporais. Vale notar que, para o ajuste do modelo TBATS, a transformação de Box-Cox foi intencionalmente desativada (\texttt{use.box.cox = FALSE}). Observou-se que a aplicação automática da transformação resultava em problemas a previsão, levando à explosão dos intervalos de confiança, o que comprometia a robustez do modelo na fase de avaliação.
+
+
+\section{Resultados}
+
+
+
+\subsection{Análise de Resíduos}
+
+```{r message=FALSE, warning=FALSE}
+# ==============================================================================
+# 5. ANÁLISE DE RESÍDUOS E TESTES ESTATÍSTICOS
+# ==============================================================================
+# Função para rodar diagnósticos completos
+diagnostico_residuos <- function(modelo, nome) {
+  #cat(paste0("\n>>> DIAGNÓSTICO DE RESÍDUOS: ", nome, " <<<\n"))
+  
+  # 1. Gráficos (ACF e Histograma)
+  # checkresiduals gera o gráfico na janela de plotagem
+  checkresiduals(modelo,test=FALSE) 
+  
+  # Extrair resíduos
+  res <- residuals(modelo)
+  
+  # 2. Teste de Ljung-Box (Independência / Autocorrelação)
+  # H0: Resíduos são independentes (ruído branco). P-valor < 0.05 indica problema.
+  lb_test <- Box.test(res, type = "Ljung-Box", lag = 24) # Lag 24 para ciclo diário
+  #print(lb_test)
+  
+  # 3. Teste de Normalidade (Jarque-Bera)
+  # Usamos Jarque-Bera pois Shapiro-Wilk não aceita N > 5000
+  # H0: Resíduos são normais.
+  jb_test <- jarque.bera.test(res) 
+  #print(jb_test)
+}
+```
+
+```{r include=FALSE}
+print(fit_tbats)
+accuracy(fit_tbats)
+summary(fit_harm)
+summary(fit_dyn)
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Executar diagnósticos (OBS: vai pedir para apertar Enter no console)
+diagnostico_residuos(fit_tbats, "1. TBATS")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+diagnostico_residuos(fit_harm,  "2. Harmônica")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+diagnostico_residuos(fit_dyn,   "3. Dinâmica")
+```
+
+A análise dos resíduos, através dos gráficos de autocorrelação (ACF) e do histograma, indica que os modelos ajustados \textbf{não atenderam integralmente os pressupostos estatísticos clássicos}. A presença de correlação residual remanescente e o desvio da normalidade são resultados claros nos gráficos.
+
+\begin{table}[ht]
+    \centering
+    \caption{Resultados dos Testes de Diagnóstico de Resíduos}
+    \label{tab:diagnostico_residuos}
+    \vspace{0.2cm}
+    \begin{tabular}{|l|c|c|c|c|}
+        \hline
+        & \multicolumn{2}{c|}{\textbf{Ljung-Box}} & \multicolumn{2}{c|}{\textbf{Jarque-Bera}} \\
+        \hline
+        \textbf{Modelo} & \textbf{Estat. ($X^2$)} & \textbf{P-valor} & \textbf{Estat.} & \textbf{P-valor} \\
+        \hline
+        1. TBATS & 7662.0 & $< 0.01$ & 10336.0 & $< 0.01$ \\
+        \hline
+        2. Reg. Harmônica & 10038.0 & $< 0.01$ & 8062.3 & $< 0.01$ \\
+        \hline
+        3. Reg. Dinâmica & 10439.0 & $< 0.01$ & 7865.2 & $< 0.01$ \\
+        \hline
+    \end{tabular}
+    
+    \vspace{0.1cm}
+    \footnotesize{\textit{Nota: P-valores muito baixos e limitamos a 0.01.}}
+\end{table}
+
+Os resultados dos testes estatísticos de diagnóstico, apresentados na tabela, reforçam o que foi visualmente observado nos gráficos dos resíduos. A rejeição categórica das hipóteses nulas (p-valor $< 0.01$ para todos os modelos) nos testes de Ljung-Box e Jarque-Bera confirma que os modelos não atenderam aos pressupostos clássicos de \textbf{independência} (presença de autocorrelação residual) e \textbf{normalidade} dos erros.
+
+\subsection{Análise Gráfica}
+
+As Figuras abaixo comparam as previsões geradas pelos modelos com os dados reais observados no período de teste.
+
+```{r}
+# 1. Recuperar datas e dados
+datas_teste <- tail(bike_df$datetime, h_teste)
+
+# Função auxiliar para criar o gráfico de um único modelo
+plot_modelo_individual <- function(dados_reais, previsao_obj, nome_modelo, cor_linha) {
+  
+  # Monta dataframe local
+  df_temp <- data.frame(
+    Data = datas_teste,
+    Real = as.numeric(dados_reais),
+    Predito = as.numeric(previsao_obj$mean),
+    # Extrai o intervalo de confiança de 95% do objeto forecast
+    Lower = as.numeric(previsao_obj$lower[, "95%"]),
+    Upper = as.numeric(previsao_obj$upper[, "95%"])
+  )
+  
+  # Cria o plot
+  ggplot(df_temp, aes(x = Data)) +
+    # Faixa de Confiança
+    geom_ribbon(aes(ymin = Lower, ymax = Upper), fill = cor_linha, alpha = 0.15) +
+    
+    # Linha Real
+    geom_line(aes(y = Real), color = "black", alpha = 0.6, size = 0.4) +
+    
+    # Linha do Modelo
+    geom_line(aes(y = Predito), color = cor_linha, size = 0.8) +
+    
+    # Estética
+    labs(title = paste("Modelo:", nome_modelo),
+         subtitle = "Preto: Real | Colorido: Previsão (com IC 95%)",
+         y = "Bikes", x = NULL) +
+    scale_x_datetime(date_labels = "%d/%m", date_breaks = "3 days") +
+    theme_minimal()
+}
+
+# 2. Gerar os 3 gráficos
+g1 <- plot_modelo_individual(y_teste, prev_tbats, "1. TBATS", "#E41A1C") # Vermelho
+g2 <- plot_modelo_individual(y_teste, prev_harm,  "2. Harmônica", "#377EB8") # Azul
+g3 <- plot_modelo_individual(y_teste, prev_dyn,   "3. Dinâmica", "#4DAF4A") # Verde
+
+# 3. Exibir juntos (Painel)
+#grid.arrange(g1, g2, g3, ncol = 1)
+```
+
+```{r echo=FALSE}
+plot(g1)
+```
+
+```{r echo=FALSE}
+plot(g2)
+```
+
+```{r echo=FALSE}
+plot(g3)
+```
+
+A análise visual das previsões individuais revela uma diferenca no comportamento dos modelos. O modelo \textbf{TBATS} demonstra uma maior precisao local aos dados, ajustando-se com eficácia e acompanhando de perto a alta amplitude dos picos diários de aluguel. Em contraste, os modelos de \textbf{Regressão} (Harmônica e Dinâmica) tendem a apresentar uma trajetória mais suavizada, oscilando de forma mais leve em torno de um valor médio local. Esta diferença manifesta-se criticamente nos Intervalos de Confiança (IC): o TBATS exibe um IC notavelmente constante e de menor largura, refletindo uma suposição de variância do erro homogênea (\textit{homocedasticidade}). Por outro lado, os modelos de Regressão demonstram um crescimento acentuado e contínuo de seus ICs ao longo do horizonte preditivo, culminando em valores extremamente amplos e com pouca utilidade prática para a aplicação, sugerindo uma sensibilidade maior à incerteza acumulada.
+
+
+```{r}
+# 1. Recuperar datas originais
+datas_teste <- tail(bike_df$datetime, h_teste)
+
+# 2. Montar Dataframe com TODAS as previsões
+df_grafico_final <- data.frame(
+  Data = datas_teste,
+  Real = as.numeric(y_teste),
+  TBATS = as.numeric(prev_tbats$mean),
+  Harmonica = as.numeric(prev_harm$mean),
+  Dinamica = as.numeric(prev_dyn$mean),
+  # Intervalo de Confiança (95%) apenas do modelo Dinâmico (para destaque)
+  Lower_Dyn = as.numeric(prev_dyn$lower[, "95%"]),
+  Upper_Dyn = as.numeric(prev_dyn$upper[, "95%"])
+)
+
+# 3. Plotagem
+ggplot(df_grafico_final, aes(x = Data)) +
+  # --- LINHAS DAS SÉRIES ---
+  # Dados Reais (Preto)
+  geom_line(aes(y = Real, color = "0. Real"), size = 0.8, alpha = 1) +
+  
+  # Modelos Concorrentes (Linhas mais finas)
+  geom_line(aes(y = TBATS, color = "1. TBATS"), size = 0.6, alpha = 0.7) +
+  geom_line(aes(y = Harmonica, color = "2. Harmônica"), size = 0.6, alpha = 0.7) +
+  
+  # Modelo Campeão (Linha mais grossa e forte)
+  geom_line(aes(y = Dinamica, color = "3. Dinâmica"), size = 0.6) +
+  
+  # --- FORMATAÇÃO DO EIXO X (Data/Hora) ---
+  scale_x_datetime(
+    date_labels = "%d/%m %Hh", 
+    date_breaks = "2 days",      # Mostra datas a cada 2 dias
+    minor_breaks = "12 hours"    # Marcações menores a cada 12h
+  ) +
+  
+  # --- CORES E LEGENDAS ---
+  scale_color_manual(name = "Séries", values = c(
+    "0. Real" = "black", 
+    "1. TBATS" = "#E41A1C",       # Vermelho
+    "2. Harmônica" = "#377EB8",   # Azul
+    "3. Dinâmica" = "#4DAF4A"     # Verde Escuro
+  ))  +
+  # --- TÍTULOS ---
+  labs(
+    title = "Comparação Final: TBATS vs Harmônica vs Dinâmica",
+    subtitle = "A faixa verde representa o Intervalo de Confiança (95%) do modelo Dinâmico",
+    y = "Demanda de Bicicletas",
+    x = "Data e Hora"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+A Tabela  apresenta as métricas de erro calculadas sobre a base de teste.
+
+
+```{r}
+# ==============================================================================
+# 5. AVALIAÇÃO DE DESEMPENHO (Métricas de Erro)
+# ==============================================================================
+
+# Função auxiliar para extrair métricas do dataset de TESTE
+get_metrics <- function(previsao, real, nome_modelo) {
+  acc <- accuracy(previsao, real)
+  # A linha 2 do output de accuracy() contém as métricas do Test set
+  data.frame(
+    Modelo = nome_modelo,
+    RMSE   = acc[2, "RMSE"],
+    MAE    = acc[2, "MAE"],
+    MAPE   = acc[2, "MAPE"]
+  )
+}
+
+# Tabela Comparativa
+resultados <- rbind(
+  get_metrics(prev_tbats, y_teste, "1. TBATS"),
+  get_metrics(prev_harm,  y_teste, "2. Harmônica (Só Fourier)"),
+  get_metrics(prev_dyn,   y_teste, "3. Dinâmica (Fourier + Clima)")
+)
+
+#print("--- RESULTADOS FINAIS DE ACURÁCIA ---")
+#print(resultados)
+```
+
+\begin{table}[htbp]
+    \centering
+    \caption{Métricas de Desempenho Preditivo no Conjunto de Teste ($h=504$ horas)}
+    \label{tab:metricas_erro_teste}
+    \vspace{0.2cm}
+    \begin{tabular}{|l|c|c|c|}
+        \hline
+        \textbf{Modelo} & \textbf{RMSE} & \textbf{MAE} \\
+        \hline
+        1. TBATS & 204.8780 & 164.6549  \\
+        \hline
+        2. Reg. Harmônica (Só Fourier) & 226.5879 & 203.1621  \\
+        \hline
+        3. Dinâmica (Fourier + Clima) & \textbf{178.6454} & \textbf{154.5670}  \\
+        \hline
+    \end{tabular}
+    \vspace{0.1cm}
+    \footnotesize
+    \par \textit{Nota: O modelo de Regressão Dinâmica apresentou os menores erros pontuais (RMSE e MAE) na previsão fora da amostra.}
+\end{table}
+
+\section{Discussão}
+
+A análise comparativa do desempenho preditivo revela uma hierarquia clara entre as abordagens testadas. O Modelo de \textbf{Regressão Dinâmica} (Fourier + Clima) apresentou o melhor desempenho global, atingindo o menor RMSE (178.65) e MAE (154.57). Em contraste, o modelo TBATS, embora robusto para capturar a sazonalidade complexa, obteve um erro superior (RMSE 204.88), enquanto a Regressão Harmônica simples apresentou o pior desempenho (RMSE 226.59). Vale notar que nas metricas de ajuste do modelo sobre os dados de treino o TBATS foi o que teve o melhor ajuste seguido pela \textbf{Regressão Dinâmica}.
+
+Observando os gráficos, os modelos baseados em regressão (Harmônica e Dinâmica) tenderam a apresentar uma trajetória mais suave, seguindo uma média menos volátil. Essa característica provou ser mais robusta em séries de alta frequência e elevada variabilidade, resultando em erros médios (\textit{RMSE} e \textit{MAE}) consistentemente menores no conjunto de teste. Em contraste, o \textbf{TBATS} demonstrou ser mais eficiente na captura da amplitude dos picos de demanda nas primeiras duas semanas de previsão. Contudo, essa alta eficiência na aderência aos dados passados limitou sua capacidade de generalização em eventos não modelados. O desempenho do TBATS deteriorou-se sensivelmente ao aproximar-se de datas determinísticas do calendário, como Natal e Ano Novo, onde o modelo sofreu por não conseguir incorporar o impacto desses eventos atípicos. Acredita-se que, devido à curta extensão da série (apenas dois anos), o TBATS não conseguiu estimar o componente de sazonalidade anual ou o efeito de feriados fixos, uma limitação que poderia ser superada com um histórico de dados mais longo.
+
+Vale ressaltar que os testes de diagnóstico (Ljung-Box e Jarque-Bera) indicaram a presença de autocorrelação residual e não-normalidade em todos os modelos. Esse comportamento é esperado em séries de alta frequência e demanda.
+
+\section{Conclusão}
+
+Este trabalho avaliou a eficácia de diferentes estratégias de modelagem para a previsão de demanda horária de bicicletas compartilhadas. Concluiu-se que a abordagem híbrida, combinando a modelagem determinística da sazonalidade (termos de Fourier) com regressores climáticos (Regressão Dinâmica), é superior aos modelos TBATS e Regressão Harmônica no conjunto de teste. Contudo, a análise revelou um \textit{trade-off} importante: o TBATS obteve o melhor ajuste aos dados de treinamento (\textit{in-sample}), mas falhou na generalização (\textit{out-of-sample}), sendo especialmente vulnerável em datas fixas de calendário como Natal e Ano Novo. Essa limitação é atribuída à curta extensão da série histórica, que impediu a incorporação robusta da sazonalidade anual. Por fim, embora as métricas pontuais favoreçam o Modelo Dinâmico, notou-se que os intervalos de confiança (IC) dos modelos de regressão se expandiram acentuadamente ao final do horizonte de previsão, ao passo que o IC do TBATS permaneceu constante e menor, um fator de estabilidade relevante para a tomada de decisão que as métricas pontuais não refletem. Conclui-se, portanto, que é fundamental a inclusão de variáveis explícitas de calendário ou sazonalidade anual em análises futuras, para garantir a precisão do ajuste em períodos especiais.
+
+\section*{Referências}
+
+\noindent \textbf{1. Modelos TBATS e BATS (De Livera, Hyndman, Cleveland):}\\
+DE LIVERA, A. M., HYNDMAN, R. J., \& CLEVELAND, W. S. Forecasting time series with complex seasonal patterns using exponential smoothing. \textit{Journal of the American Statistical Association}, 106(496), 1513–1527, 2011.
+
+\vspace{0.1cm}
+
+\noindent \textbf{2. Modelos ARIMA e Séries de Fourier (Hyndman, Athanasopoulos):}\\
+HYNDMAN, R. J., \& ATHANASOPOULOS, G. \textit{Forecasting: Principles and Practice} (3rd ed.). OTexts, 2021. Disponível em: \url{https://otexts.com/fpp3/}.
+
+\vspace{0.1cm}
+
+\noindent \textbf{3. Testes de Diagnóstico (Ljung-Box e Jarque-Bera):}\\
+LJUNG, G. M., \& BOX, G. E. P. On a Measure of Lack of Fit in Time Series Models. \textit{Biometrika}, 65(2), 297–303, 1978.
+
+\vspace{0.1cm}
+
+\noindent \textbf{4. Software R:}\\
+R CORE TEAM. \textit{R: A Language and Environment for Statistical Computing}. R Foundation for Statistical Computing, Vienna, Austria, 2024. Disponível em: \url{https://www.R-project.org/}.
+
+\vspace{0.1cm}
+
+\noindent \textbf{5. Pacote \texttt{forecast} (Hyndman):}\\
+HYNDMAN, R. J., et al. \textit{forecast: Forecasting functions for time series and linear models}. R package version 8.22, 2024. Disponível em: \url{https://pkg.robjhyndman.com/forecast/}.
+
+\vspace{0.1cm}
+
+\noindent \textbf{6. Fonte dos Dados (Bike Sharing Dataset):}\\
+FANAEE-TABAR, I., \& LASTRA, L. M. (2013). \textit{Bike Sharing Dataset}. UCI Machine Learning Repository. Disponível em: \url{https://archive.ics.uci.edu/ml/datasets/bike+sharing+dataset}.
+
+
