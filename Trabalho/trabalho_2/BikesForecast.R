@@ -27,7 +27,7 @@ bike_df <- raw_data %>%
   drop_na()
 
 # MSTS 
-y_msts <- msts(bike_df$cnt, seasonal.periods = c(24, 7*24,30*24), start = c(2011, 1))
+y_msts <- msts(bike_df$cnt, seasonal.periods = c(24, 7*24), start = c(2011, 1))
 
 # Covariáveis
 xreg_clima <- cbind(
@@ -106,7 +106,7 @@ fit_tbats <- tbats(y_treino, use.box.cox = FALSE, use.parallel = TRUE)
 prev_tbats <- forecast(fit_tbats, h = h_teste, level = 95) 
 
 # FOURIER 
-K_params <- c(10, 5, 5) 
+K_params <- c(10, 5) 
 fourier_treino <- fourier(y_treino, K = K_params)
 fourier_teste  <- fourier(y_treino, K = K_params, h = h_teste)
 

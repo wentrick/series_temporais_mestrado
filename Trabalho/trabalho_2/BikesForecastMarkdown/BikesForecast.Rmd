@@ -111,7 +111,7 @@ O conjunto de dados \textit{Bike Sharing} foi submetido a um rigoroso pré-proce
     
     \item \textbf{Tratamento Específico do TBATS:} Foi identificado que a ativação da transformação de Box-Cox (\texttt{use.box.cox = TRUE}) no modelo TBATS induzia instabilidade numérica, causando a explosão do intervalo de confiança e a degradação da acurácia. Portanto, a transformação foi desativada no ajuste do TBATS para garantir a robustez e comparabilidade com os demais modelos.
 \end{enumerate}
-O conjunto final de dados, após o tratamento, foi dividido para a validação \textit{holdout}, reservando as últimas 504 horas para o conjunto de teste.
+O conjunto final de dados, após o tratamento, foi dividido para a validação \textit{holdout}, reservando as últimas 672 horas para o conjunto de teste.
 
 ```{r message=FALSE, warning=FALSE}
 # 1. Gráfico da Série Completa (2011-2012)
